@@ -336,6 +336,9 @@ class RTCPeerConnection(AsyncIOEventEmitter):
     def signalingState(self):
         return self.__signalingState
 
+    def setRtcConfiguration(self, configuration: RTCConfiguration) -> None:
+        self.__configuration = configuration
+
     async def addIceCandidate(self, candidate: RTCIceCandidate) -> None:
         """
         Add a new :class:`RTCIceCandidate` received from the remote peer.
