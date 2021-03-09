@@ -26,7 +26,7 @@ class PiH264StreamTrack(EncodedStreamTrack):
 
     def __init__(self, video_rate, clock_rate=90000) -> None:
         super().__init__()
-        self.nal_queue = Queue(10)
+        self.nal_queue = Queue(3)
         self._timestamp = 0
         self._frame_time = 1 / video_rate
         self._clock_rate = clock_rate
@@ -174,8 +174,9 @@ class PiH264StreamTrack(EncodedStreamTrack):
                 await asyncio.sleep(self._frame_time)
                 continue
             nal = self.nal_queue.get()
-            if (nal[4] & 0x1F) != 0x01 or not keyframe:
-                break
+            #if (nal[4] & 0x1F) != 0x01 or not keyframe:
+            #    break
+            break
         self._timestamp += int(self._frame_time * self._clock_rate)
         timestamp = self._timestamp
         return self._packetize(self._split_bitstream(nal)), timestamp
