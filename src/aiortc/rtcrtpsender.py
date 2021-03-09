@@ -36,7 +36,7 @@ from .stats import (
 )
 from .utils import random16, random32, uint16_add, uint32_add
 
-logger = logging.getLogger("rtp")
+logger = logging.getLogger(__name__)
 
 RTP_HISTORY_SIZE = 128
 RTT_ALPHA = 0.85
@@ -401,7 +401,7 @@ class RTCRtpSender:
             pass
 
     def __log_debug(self, msg: str, *args) -> None:
-        logger.debug(f"sender(%s) {msg}", self.__kind, *args)
+        logger.debug(f"RTCRtpSender(%s) {msg}", self.__kind, *args)
 
     def __log_warning(self, msg: str, *args) -> None:
-        logger.warning(f"sender(%s) {msg}", self.__kind, *args)
+        logger.warning(f"RTCRtpsender(%s) {msg}", self.__kind, *args)

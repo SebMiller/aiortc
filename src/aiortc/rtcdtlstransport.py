@@ -44,7 +44,7 @@ SRTP_SALT_LEN = 14
 
 CERTIFICATE_T = TypeVar("CERTIFICATE_T", bound="RTCCertificate")
 
-logger = logging.getLogger("dtls")
+logger = logging.getLogger(__name__)
 
 assert lib.OpenSSL_version_num() >= 0x10002000, "OpenSSL 1.0.2 or better is required"
 
@@ -249,7 +249,7 @@ class RtpRouter:
         self.senders: Dict[int, Any] = {}
         self.mid_table: Dict[str, Any] = {}
         self.ssrc_table: Dict[int, Any] = {}
-        self.payload_type_table: Dict[int, Any] = {}
+        self.payload_type_table: Dict[int, Set] = {}
 
     def register_receiver(
         self,
@@ -264,7 +264,9 @@ class RtpRouter:
         for ssrc in ssrcs:
             self.ssrc_table[ssrc] = receiver
         for payload_type in payload_types:
-            self.payload_type_table[payload_type] = receiver
+            if payload_type not in self.payload_type_table:
+                self.payload_type_table[payload_type] = set()
+            self.payload_type_table[payload_type].add(receiver)
 
     def register_sender(self, sender, ssrc: int) -> None:
         self.senders[ssrc] = sender
@@ -302,14 +304,15 @@ class RtpRouter:
 
     def route_rtp(self, packet: RtpPacket) -> Optional[Any]:
         ssrc_receiver = self.ssrc_table.get(packet.ssrc)
-        pt_receiver = self.payload_type_table.get(packet.payload_type)
+        pt_receivers = self.payload_type_table.get(packet.payload_type, set())
 
         # the SSRC and payload type are known and match
-        if ssrc_receiver is not None and ssrc_receiver == pt_receiver:
+        if ssrc_receiver is not None and ssrc_receiver in pt_receivers:
             return ssrc_receiver
 
         # the SSRC is unknown but the payload type matches, update the SSRC table
-        if ssrc_receiver is None and pt_receiver is not None:
+        if ssrc_receiver is None and len(pt_receivers) == 1:
+            pt_receiver = list(pt_receivers)[0]
             self.ssrc_table[packet.ssrc] = pt_receiver
             return pt_receiver
 
@@ -320,7 +323,8 @@ class RtpRouter:
         self.receivers.discard(receiver)
         self.__discard(self.mid_table, receiver)
         self.__discard(self.ssrc_table, receiver)
-        self.__discard(self.payload_type_table, receiver)
+        for pt, receivers in self.payload_type_table.items():
+            receivers.discard(receiver)
 
     def unregister_sender(self, sender) -> None:
         self.__discard(self.senders, sender)
@@ -702,7 +706,7 @@ class RTCDtlsTransport(AsyncIOEventEmitter):
             self.__tx_packets += 1
 
     def __log_debug(self, msg: str, *args) -> None:
-        logger.debug(self._role + " " + msg, *args)
+        logger.debug(f"RTCDtlsTransport(%s) {msg}", self._role, *args)
 
     def __log_warning(self, msg: str, *args) -> None:
-        logger.warning(self._role + " " + msg, *args)
+        logger.warning(f"RTCDtlsTransport(%s) {msg}", self._role, *args)

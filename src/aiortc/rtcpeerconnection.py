@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import logging
 import uuid
 from collections import OrderedDict
 from typing import Dict, List, Optional, Set, Union
@@ -40,6 +41,8 @@ from .stats import RTCStatsReport
 DISCARD_HOST = "0.0.0.0"
 DISCARD_PORT = 9
 MEDIA_KINDS = ["audio", "video"]
+
+logger = logging.getLogger(__name__)
 
 
 def filter_preferred_codecs(
@@ -274,6 +277,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         self.__certificates = [RTCCertificate.generateCertificate()]
         self.__cname = f"{uuid.uuid4()}"
         self.__configuration = configuration or RTCConfiguration()
+        self.__dtlsTransports: Set[RTCDtlsTransport] = set()
         self.__iceTransports: Set[RTCIceTransport] = set()
         self.__remoteDtls: Dict[
             Union[RTCRtpTransceiver, RTCSctpTransport], RTCDtlsParameters
@@ -290,6 +294,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         self.__stream_id = str(uuid.uuid4())
         self.__transceivers: List[RTCRtpTransceiver] = []
 
+        self.__connectionState = "new"
         self.__iceConnectionState = "new"
         self.__iceGatheringState = "new"
         self.__isClosed = False
@@ -301,11 +306,36 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         self.__pendingRemoteDescription: Optional[sdp.SessionDescription] = None
 
     @property
+    def connectionState(self) -> str:
+        """
+        The current connection state.
+
+        Possible values: `"connected"`, `"connecting"`, `"closed"`, `"failed"`, `"new`".
+
+        When the state changes, the `"connectionstatechange"` event is fired.
+        """
+        return self.__connectionState
+
+    @property
     def iceConnectionState(self) -> str:
+        """
+        The current ICE connection state.
+
+        Possible values: `"checking"`, `"completed"`, `"closed"`, `"failed"`, `"new`".
+
+        When the state changes, the `"iceconnectionstatechange"` event is fired.
+        """
         return self.__iceConnectionState
 
     @property
     def iceGatheringState(self) -> str:
+        """
+        The current ICE gathering state.
+
+        Possible values: `"complete"`, `"gathering"`, `"new`".
+
+        When the state changes, the `"icegatheringstatechange"` event is fired.
+        """
         return self.__iceGatheringState
 
     @property
@@ -334,6 +364,13 @@ class RTCPeerConnection(AsyncIOEventEmitter):
 
     @property
     def signalingState(self):
+        """
+        The current signaling state.
+
+        Possible values: `"closed"`, `"have-local-offer"`, `"have-remote-offer`", `"stable"`.
+
+        When the state changes, the `"signalingstatechange"` event is fired.
+        """
         return self.__signalingState
 
     async def addIceCandidate(self, candidate: RTCIceCandidate) -> None:
@@ -444,6 +481,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         # update states
         self.__updateIceGatheringState()
         self.__updateIceConnectionState()
+        self.__updateConnectionState()
 
         # no more events will be emitted, so remove all event listeners
         # to facilitate garbage collection.
@@ -889,10 +927,12 @@ class RTCPeerConnection(AsyncIOEventEmitter):
             for dtlsTransport in oldTransports:
                 await dtlsTransport.stop()
                 await dtlsTransport.transport.stop()
+                self.__dtlsTransports.discard(dtlsTransport)
                 self.__iceTransports.discard(dtlsTransport.transport)
                 iceCandidates.pop(dtlsTransport.transport, None)
             self.__updateIceGatheringState()
             self.__updateIceConnectionState()
+            self.__updateConnectionState()
 
         # add remote candidates
         coros = [
@@ -973,13 +1013,20 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         iceGatherer.on("statechange", self.__updateIceGatheringState)
         iceTransport = RTCIceTransport(iceGatherer)
         iceTransport.on("statechange", self.__updateIceConnectionState)
+        iceTransport.on("statechange", self.__updateConnectionState)
         self.__iceTransports.add(iceTransport)
+
+        # create DTLS transport
+        dtlsTransport = RTCDtlsTransport(iceTransport, self.__certificates)
+        dtlsTransport.on("statechange", self.__updateConnectionState)
+        self.__dtlsTransports.add(dtlsTransport)
 
         # update states
         self.__updateIceGatheringState()
         self.__updateIceConnectionState()
+        self.__updateConnectionState()
 
-        return RTCDtlsTransport(iceTransport, self.__certificates)
+        return dtlsTransport
 
     def __createSctpTransport(self) -> None:
         self.__sctp = RTCSctpTransport(self.__createDtlsTransport())
@@ -1040,6 +1087,9 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         rtp.rtcp.mux = True
         return rtp
 
+    def __log_debug(self, msg: str, *args) -> None:
+        logger.debug(f"RTCPeerConnection() {msg}", *args)
+
     def __remoteDescription(self) -> Optional[sdp.SessionDescription]:
         return self.__pendingRemoteDescription or self.__currentRemoteDescription
 
@@ -1072,8 +1122,37 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         self.__signalingState = state
         self.emit("signalingstatechange")
 
+    def __updateConnectionState(self) -> None:
+        # compute new state
+        # NOTE: we do not have a "disconnected" state
+        dtlsStates = set(map(lambda x: x.state, self.__dtlsTransports))
+        iceStates = set(map(lambda x: x.state, self.__iceTransports))
+        if self.__isClosed:
+            state = "closed"
+        elif "failed" in iceStates or "failed" in dtlsStates:
+            state = "failed"
+        elif not iceStates.difference(["new", "closed"]) and not dtlsStates.difference(
+            ["new", "closed"]
+        ):
+            state = "new"
+        elif "checking" in iceStates or "connecting" in dtlsStates:
+            state = "connecting"
+        elif "new" in dtlsStates:
+            # this avoids a spurious connecting -> connected -> connecting
+            # transition after ICE connects but before DTLS starts
+            state = "connecting"
+        else:
+            state = "connected"
+
+        # update state
+        if state != self.__connectionState:
+            self.__log_debug("connectionState %s -> %s", self.__connectionState, state)
+            self.__connectionState = state
+            self.emit("connectionstatechange")
+
     def __updateIceConnectionState(self) -> None:
         # compute new state
+        # NOTE: we do not have "connected" or "disconnected" states
         states = set(map(lambda x: x.state, self.__iceTransports))
         if self.__isClosed:
             state = "closed"
@@ -1088,6 +1167,9 @@ class RTCPeerConnection(AsyncIOEventEmitter):
 
         # update state
         if state != self.__iceConnectionState:
+            self.__log_debug(
+                "iceConnectionState %s -> %s", self.__iceConnectionState, state
+            )
             self.__iceConnectionState = state
             self.emit("iceconnectionstatechange")
 
@@ -1103,6 +1185,9 @@ class RTCPeerConnection(AsyncIOEventEmitter):
 
         # update state
         if state != self.__iceGatheringState:
+            self.__log_debug(
+                "iceGatheringState %s -> %s", self.__iceGatheringState, state
+            )
             self.__iceGatheringState = state
             self.emit("icegatheringstatechange")
 

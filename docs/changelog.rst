@@ -3,6 +3,25 @@ Changelog
 
 .. currentmodule:: aiortc
 
+1.2.0
+-----
+
+ * Fix jitter buffer to avoid severe picture corruption under packet loss and
+   send Picture Loss Indication (PLI) when needed.
+ * Make H.264 encoder honour the bitrate from the bandwidth estimator.
+ * Add support for hardware-accelerated H.264 encoding on Raspberry Pi 4 using
+   the `h264_omx` codec.
+ * Add :class:`aiortc.contrib.media.MediaRelay` class to allow sending media
+   tracks to multiple consumers.
+
+1.1.2
+-----
+
+ * Add :attr:`RTCPeerConnection.connectionState` property.
+ * Correctly detect RTCIceTransport `"failed"` state.
+ * Correctly route RTP packets when there are multiple tracks of the same kind.
+ * Use full module name to name loggers.
+
 1.1.1
 -----
 

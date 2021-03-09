@@ -30,7 +30,7 @@ from .rtcdatachannel import RTCDataChannel, RTCDataChannelParameters
 from .rtcdtlstransport import RTCDtlsTransport
 from .utils import random32, uint16_add, uint16_gt, uint32_gt, uint32_gte
 
-logger = logging.getLogger("sctp")
+logger = logging.getLogger(__name__)
 
 # local constants
 COOKIE_LENGTH = 24
@@ -726,7 +726,9 @@ class RTCSctpTransport(AsyncIOEventEmitter):
 
             # configure logging
             if logger.isEnabledFor(logging.DEBUG):
-                prefix = self.is_server and "server " or "client "
+                prefix = "RTCSctpTransport(%s) " % (
+                    self.is_server and "server" or "client"
+                )
                 self.__log_debug = lambda msg, *args: logger.debug(prefix + msg, *args)
 
             # initialise local channel ID counter

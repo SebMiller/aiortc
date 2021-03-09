@@ -18,7 +18,7 @@ cffi_modules = [
     "src/_cffi_src/build_vpx.py:ffibuilder",
 ]
 install_requires = [
-    "aioice>=0.7.2,<0.8.0",
+    "aioice>=0.7.5,<0.8.0",
     "av>=8.0.0,<9.0.0",
     "cffi>=1.0.0",
     "crc32c>=2.1",
@@ -27,6 +27,15 @@ install_requires = [
     "pyee>=6.0.0",
     "pylibsrtp>=0.5.6",
 ]
+
+extras_require = {
+    'dev': [
+        'aiohttp>=3.7.0',
+        'coverage>=5.0',
+        'numpy>=1.19.0',
+        'websockets>=8.0',
+    ]
+}
 
 if os.environ.get("READTHEDOCS") == "True":
     cffi_modules = []
@@ -59,4 +68,5 @@ setuptools.setup(
     packages=["aiortc", "aiortc.codecs", "aiortc.contrib"],
     setup_requires=["cffi>=1.0.0"],
     install_requires=install_requires,
+    extras_require=extras_require,
 )

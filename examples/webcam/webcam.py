@@ -9,9 +9,36 @@ import ssl
 from aiohttp import web
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaPlayer
+from aiortc.contrib.media import MediaPlayer, MediaRelay
 
 ROOT = os.path.dirname(__file__)
+
+
+relay = None
+webcam = None
+
+
+def create_local_tracks(play_from):
+    global relay, webcam
+
+    if play_from:
+        player = MediaPlayer(play_from)
+        return player.audio, player.video
+    else:
+        options = {"framerate": "30", "video_size": "640x480"}
+        if relay is None:
+            if platform.system() == "Darwin":
+                webcam = MediaPlayer(
+                    "default:none", format="avfoundation", options=options
+                )
+            elif platform.system() == "Windows":
+                webcam = MediaPlayer(
+                    "video=Integrated Camera", format="dshow", options=options
+                )
+            else:
+                webcam = MediaPlayer("/dev/video0", format="v4l2", options=options)
+            relay = MediaRelay()
+        return None, relay.subscribe(webcam.video)
 
 
 async def index(request):
@@ -31,29 +58,22 @@ async def offer(request):
     pc = RTCPeerConnection()
     pcs.add(pc)
 
-    @pc.on("iceconnectionstatechange")
-    async def on_iceconnectionstatechange():
-        print("ICE connection state is %s" % pc.iceConnectionState)
-        if pc.iceConnectionState == "failed":
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        print("Connection state is %s" % pc.connectionState)
+        if pc.connectionState == "failed":
             await pc.close()
             pcs.discard(pc)
 
     # open media source
-    if args.play_from:
-        player = MediaPlayer(args.play_from)
-    else:
-        options = {"framerate": "30", "video_size": "640x480"}
-        if platform.system() == "Darwin":
-            player = MediaPlayer("default:none", format="avfoundation", options=options)
-        else:
-            player = MediaPlayer("/dev/video0", format="v4l2", options=options)
+    audio, video = create_local_tracks(args.play_from)
 
     await pc.setRemoteDescription(offer)
     for t in pc.getTransceivers():
-        if t.kind == "audio" and player.audio:
-            pc.addTrack(player.audio)
-        elif t.kind == "video" and player.video:
-            pc.addTrack(player.video)
+        if t.kind == "audio" and audio:
+            pc.addTrack(audio)
+        elif t.kind == "video" and video:
+            pc.addTrack(video)
 
     answer = await pc.createAnswer()
     await pc.setLocalDescription(answer)
@@ -92,6 +112,8 @@ if __name__ == "__main__":
 
     if args.verbose:
         logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
 
     if args.cert_file:
         ssl_context = ssl.SSLContext()

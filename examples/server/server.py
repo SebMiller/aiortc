@@ -11,12 +11,13 @@ from aiohttp import web
 from av import VideoFrame
 
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder
+from aiortc.contrib.media import MediaBlackhole, MediaPlayer, MediaRecorder, MediaRelay
 
 ROOT = os.path.dirname(__file__)
 
 logger = logging.getLogger("pc")
 pcs = set()
+relay = MediaRelay()
 
 
 class VideoTransformTrack(MediaStreamTrack):
@@ -114,8 +115,8 @@ async def offer(request):
 
     # prepare local media
     player = MediaPlayer(os.path.join(ROOT, "demo-instruct.wav"))
-    if args.write_audio:
-        recorder = MediaRecorder(args.write_audio)
+    if args.record_to:
+        recorder = MediaRecorder(args.record_to)
     else:
         recorder = MediaBlackhole()
 
@@ -126,10 +127,10 @@ async def offer(request):
             if isinstance(message, str) and message.startswith("ping"):
                 channel.send("pong" + message[4:])
 
-    @pc.on("iceconnectionstatechange")
-    async def on_iceconnectionstatechange():
-        log_info("ICE connection state is %s", pc.iceConnectionState)
-        if pc.iceConnectionState == "failed":
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        log_info("Connection state is %s", pc.connectionState)
+        if pc.connectionState == "failed":
             await pc.close()
             pcs.discard(pc)
 
@@ -141,10 +142,13 @@ async def offer(request):
             pc.addTrack(player.audio)
             recorder.addTrack(track)
         elif track.kind == "video":
-            local_video = VideoTransformTrack(
-                track, transform=params["video_transform"]
+            pc.addTrack(
+                VideoTransformTrack(
+                    relay.subscribe(track), transform=params["video_transform"]
+                )
             )
-            pc.addTrack(local_video)
+            if args.record_to:
+                recorder.addTrack(relay.subscribe(track))
 
         @track.on("ended")
         async def on_ended():
@@ -186,8 +190,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--port", type=int, default=8080, help="Port for HTTP server (default: 8080)"
     )
+    parser.add_argument("--record-to", help="Write received media to a file."),
     parser.add_argument("--verbose", "-v", action="count")
-    parser.add_argument("--write-audio", help="Write received audio to a file")
     args = parser.parse_args()
 
     if args.verbose:
