@@ -187,6 +187,30 @@ class RemoteStreamTrack(MediaStreamTrack):
             raise MediaStreamError
         return frame
 
+class EncodedRemoteStreamTrack(MediaStreamTrack):
+    def __init__(self, kind: str, id: Optional[str] = None) -> None:
+        super().__init__()
+        self.kind = kind
+        if id is not None:
+            self._id = id
+        self._queue: asyncio.Queue = asyncio.Queue()
+
+    async def recv(self) -> Frame:
+        return None
+
+    async def recv_encoded(self):
+        """
+        Receive the next encoded frame.
+        """
+        if self.readyState != "live":
+            raise MediaStreamError
+
+        enc_frame = await self._queue.get()
+        if enc_frame is None:
+            self.stop()
+            raise MediaStreamError
+        return enc_frame
+
 
 class TimestampMapper:
     def __init__(self) -> None:
@@ -257,7 +281,7 @@ class RTCRtpReceiver:
             self.__jitter_buffer = JitterBuffer(capacity=128, is_video=True)
             self.__nack_generator = NackGenerator()
             self.__remote_bitrate_estimator = RemoteBitrateEstimator()
-        self._track: Optional[RemoteStreamTrack] = None
+        self._track: Optional[MediaStreamTrack] = None
         self.__rtcp_exited = asyncio.Event()
         self.__rtcp_task: Optional[asyncio.Future[None]] = None
         self.__rtx_ssrc: Dict[int, int] = {}
@@ -352,17 +376,18 @@ class RTCRtpReceiver:
                 if encoding.rtx:
                     self.__rtx_ssrc[encoding.rtx.ssrc] = encoding.ssrc
 
-            # start decoder thread
-            self.__decoder_thread = threading.Thread(
-                target=decoder_worker,
-                name=self.__kind + "-decoder",
-                args=(
-                    asyncio.get_event_loop(),
-                    self.__decoder_queue,
-                    self._track._queue,
-                ),
-            )
-            self.__decoder_thread.start()
+            if isinstance(self._track, RemoteStreamTrack):
+                # start decoder thread
+                self.__decoder_thread = threading.Thread(
+                    target=decoder_worker,
+                    name=self.__kind + "-decoder",
+                    args=(
+                        asyncio.get_event_loop(),
+                        self.__decoder_queue,
+                        self._track._queue,
+                    ),
+                )
+                self.__decoder_thread.start()
 
             self.__transport._register_rtp_receiver(self, parameters)
             self.__rtcp_task = asyncio.ensure_future(self._run_rtcp())
@@ -493,11 +518,14 @@ class RTCRtpReceiver:
             await self._send_rtcp_pli(packet.ssrc)
 
         # if we have a complete encoded frame, decode it
-        if encoded_frame is not None and self.__decoder_thread:
+        if encoded_frame is not None:
             encoded_frame.timestamp = self.__timestamp_mapper.map(
                 encoded_frame.timestamp
             )
-            self.__decoder_queue.put((codec, encoded_frame))
+            if isinstance(self._track, RemoteStreamTrack) and self.__decoder_thread:
+                self.__decoder_queue.put((codec, encoded_frame))
+            elif isinstance(self._track, EncodedRemoteStreamTrack):
+                await self._track._queue.put((codec, encoded_frame))
 
     async def _run_rtcp(self) -> None:
         self.__log_debug("- RTCP started")
@@ -576,10 +604,12 @@ class RTCRtpReceiver:
         """
         Stop the decoder thread, which will in turn stop the track.
         """
-        if self.__decoder_thread:
+        if isinstance(self._track, RemoteStreamTrack) and self.__decoder_thread:
             self.__decoder_queue.put(None)
             self.__decoder_thread.join()
             self.__decoder_thread = None
+        elif self._track and isinstance(self._track, EncodedRemoteStreamTrack):
+            asyncio.create_task(self._track._queue.put(None))
 
     def __log_debug(self, msg: str, *args) -> None:
         logger.debug(f"RTCRtpReceiver(%s) {msg}", self.__kind, *args)

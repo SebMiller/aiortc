@@ -31,7 +31,7 @@ from .rtcrtpparameters import (
     RTCRtpRtxParameters,
     RTCRtpSendParameters,
 )
-from .rtcrtpreceiver import RemoteStreamTrack, RTCRtpReceiver
+from .rtcrtpreceiver import RemoteStreamTrack, EncodedRemoteStreamTrack, RTCRtpReceiver
 from .rtcrtpsender import RTCRtpSender
 from .rtcrtptransceiver import RTCRtpTransceiver
 from .rtcsctptransport import RTCSctpTransport
@@ -841,7 +841,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                     direction in ["recvonly", "sendrecv"]
                     and not transceiver.receiver.track
                 ):
-                    transceiver.receiver._track = RemoteStreamTrack(
+                    transceiver.receiver._track = EncodedRemoteStreamTrack(
                         kind=media.kind, id=description.webrtc_track_id(media)
                     )
                     trackEvents.append(
