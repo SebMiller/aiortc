@@ -193,19 +193,19 @@ class EncodedRemoteStreamTrack(MediaStreamTrack):
         self.kind = kind
         if id is not None:
             self._id = id
-        self._queue: asyncio.Queue = asyncio.Queue()
+        self._queue: queue.Queue = queue.Queue()
 
     async def recv(self) -> Frame:
         return None
 
-    async def recv_encoded(self):
+    def recv_encoded(self):
         """
         Receive the next encoded frame.
         """
         if self.readyState != "live":
             raise MediaStreamError
 
-        enc_frame = await self._queue.get()
+        enc_frame = self._queue.get()
         if enc_frame is None:
             self.stop()
             raise MediaStreamError
@@ -525,7 +525,7 @@ class RTCRtpReceiver:
             if isinstance(self._track, RemoteStreamTrack) and self.__decoder_thread:
                 self.__decoder_queue.put((codec, encoded_frame))
             elif isinstance(self._track, EncodedRemoteStreamTrack):
-                await self._track._queue.put((codec, encoded_frame))
+                self._track._queue.put((codec, encoded_frame))
 
     async def _run_rtcp(self) -> None:
         self.__log_debug("- RTCP started")
@@ -609,7 +609,7 @@ class RTCRtpReceiver:
             self.__decoder_thread.join()
             self.__decoder_thread = None
         elif self._track and isinstance(self._track, EncodedRemoteStreamTrack):
-            asyncio.create_task(self._track._queue.put(None))
+            self._track._queue.put(None)
 
     def __log_debug(self, msg: str, *args) -> None:
         logger.debug(f"RTCRtpReceiver(%s) {msg}", self.__kind, *args)
